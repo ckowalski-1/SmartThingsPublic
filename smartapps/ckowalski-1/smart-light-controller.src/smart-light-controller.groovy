@@ -19,34 +19,48 @@ definition(
     author: "Christopher Kowalski",
     description: "Control when a light turns on and off with separate \"enabled\" and \"action\" conditions. For example a light might turn on when someone arrives (action) but only when it's dark \"enabled\".\r\n\r\nEnable choices are time and light level.\r\nAction choices are motion, open/close, and arrival.\r\n\r\nWhen turned on the light will remain on for a set number of minutes after all actions are cleared. For example if two different open/close sensors are used, the light won't turn off until after BOTH are closed.\r\n",
     category: "Convenience",
-    iconUrl: "https://s3.amazonaws.com/smartapp-icons/Convenience/Cat-Convenience.png",
-    iconX2Url: "https://s3.amazonaws.com/smartapp-icons/Convenience/Cat-Convenience@2x.png",
-    iconX3Url: "https://s3.amazonaws.com/smartapp-icons/Convenience/Cat-Convenience@2x.png")
+    iconUrl: "https://s3.amazonaws.com/smartapp-icons/Convenience/App-LightUpMyWorld.png",
+    iconX2Url: "https://s3.amazonaws.com/smartapp-icons/Convenience/App-LightUpMyWorld@2x.png",
+    iconX3Url: "https://s3.amazonaws.com/smartapp-icons/Convenience/App-LightUpMyWorld@2x.png")
     
     
 preferences {
 	page(name: "firstPage")
-    page(name: "secondPage")
-    page(name: "thirdPage")
+    page(name: "pageAbout")
+//    page(name: "secondPage")
+    page(name: "dimmerConfigPage")
+    page(name: "installPage")
 }
 
 // First page
 def firstPage() {
-	dynamicPage(name: "firstPage", title: "Select lights and triggers", nextPage: "thirdPage", install: false, uninstall: true) {
-        section("Control these lights...") {
-            input "lights", "capability.switch", multiple: true
+    if (state.installed == null) {
+        // First run - initialize state
+        state.installed = false
+        return pageAbout()
+    }
+
+	dynamicPage(name: "firstPage", title: "Select lights and triggers", nextPage: "dimmerConfigPage", install: false, uninstall: state.installed) {
+        section("About") {
+            href "pageAbout", title:"About", description:"Tap to open"
         }
-        section("Turning on if there's movement..."){
+        section("Control these lights (switches) ...") {
+            input "lights", "capability.switch", multiple: true, required: false
+        }
+        section("Control these lights (dimmers) ...") {
+            input "dimmers", "capability.switchLevel", multiple: true, required: false
+        }
+        section("Turning on if there's movement ..."){
             input "motionSensor", "capability.motionSensor", title: "Motion?", multiple: true, required: false
         }
-        section("Or when a door opens...") {
+        section("Or when a door opens ...") {
             input "doors", "capability.contactSensor", title: "Door?", multiple: true, required: false
         }
         section("Or when someone arrives") {
             input "people", "capability.presenceSensor", multiple: true, required:false
         }
-        section("And then off when it's light or there's been no movement, or all doors are closed for..."){
-            input "delayMinutes", "number", title: "Minutes?"
+        section("And then off when it's light, or there's been no movement, or all doors are closed for ..."){
+            input "delayMinutes", "number", title: "Minutes?", defaultValue: 0
         }
         section("Persistent Mode?") {
         	input "perst", "bool", defaultValue: "true", required: false
@@ -55,35 +69,72 @@ def firstPage() {
             input("enableType", "enum", options: [
                 "alwaysEnabledChoice":"Always Enabled",
                 "lightSensorChoice":"Light Sensor",
-                "sunChoice": "Sun Rise/Set"], submitOnChange: true)
-        }
+                "modeEnableChoice":"Mode Change",
+                "sunChoice": "Sun Rise/Set"], defaultValue: "alwaysEnabledChoice", submitOnChange: true)
+		}
         
         // Options are based on enable type
         if (enableType == "alwaysEnabledChoice") {
             section("No additional setup for Always Enabled")
 
-		} else if (enableType == "lightSensorChoice") {
+        } else if (enableType == "lightSensorChoice") {
             section("Pick a light sensor"){
-            input "lightSensor", "capability.illuminanceMeasurement", required: true}
+                input "lightSensor", "capability.illuminanceMeasurement", required: true
+                input "actionOnEnable", "enum", title: "What to do on enable", required: true, options: enableActionTypes(), defaultValue: "Nothing"
+                input "actionOndisable", "enum", title: "What to do on disable", required: true, options: enableActionTypes(), defaultValue: "OffFull"
+            }
 
-		// Sun set/rise
-        } else {
+        } else if (enableType == "modeEnableChoice") {
+            section("Pick the enable and disable modes"){
+            input "enableMode", title: "Enable Mode", type: "location.mode", required: true, mutiple: false
+            input "disableMode", title: "Disable Mode", type: "location.mode", required: true, mutiple: false
+            input "actionOnEnable", "enum", title: "What to do on enable", required: true, options: enableActionTypes(), defaultValue: "On"
+            input "actionOndisable", "enum", title: "What to do on disable", required: true, options: enableActionTypes(), defaultValue: "OffFull"
+            }
+
+        // Sun set/rise
+        } else if (enableType == "sunChoice") {
             section ("Sunrise offset (optional)...") {
-            	input "sunriseOffsetValue", "text", title: "HH:MM", required: false
-            	input "sunriseOffsetDir", "enum", title: "Before or After", required: false, options: ["Before","After"]
-        	}
-        	section ("Sunset offset (optional)...") {
-            	input "sunsetOffsetValue", "text", title: "HH:MM", required: false
-            	input "sunsetOffsetDir", "enum", title: "Before or After", required: false, options: ["Before","After"]
-        	}
-        	section ("Zip code (optional, defaults to location coordinates when location services are enabled)...") {
-            	input "zipCode", "text", title: "Zip code", required: false
+                input "sunriseOffsetValue", "text", title: "HH:MM", required: false
+                input "sunriseOffsetDir", "enum", title: "Before or After", required: false, options: ["Before","After"]
+            }
+            section ("Sunset offset (optional)...") {
+                input "sunsetOffsetValue", "text", title: "HH:MM", required: false
+                input "sunsetOffsetDir", "enum", title: "Before or After", required: false, options: ["Before","After"]
+            }
+            section ("Zip code (optional, defaults to location coordinates when location services are enabled)...") {
+                input "zipCode", "text", title: "Zip code", required: false
+            }
+            section ("What to do on enable and disable?") {
+                input "actionOnEnable", "enum", title: "What should happne on enable", required: true, options: enableActionTypes(), defaultValue: "On"
+                input "actionOndisable", "enum", title: "What should happen on disable", required: true, options: enableActionTypes(), defaultValue: "OffFull"
             }
         }
+       
+    section("Select switch to enable/disable with double tap (optional)") {
+        input "doubleTapSwitch", "capability.switch", multiple: false, required: false, submitOnChange: true
+		}
+        
+        // Options are presented if a switch is chosed
+        if (doubleTapSwitch != null) {
+            section("Pick what to do when automation is enabled or disabled via a switch") {
+                input "DTactionOnEnable", "enum", title: "What to do on enable", required: true, options: enableActionTypes(), defaultValue: "On"
+                input "DTactionOndisable", "enum", title: "What to do on disable", required: true, options: enableActionTypes(), defaultValue: "OffFull"
+            }
+        }   
     }
 }
 
-// Page to setup based on Enabled Type
+private enableActionTypes() {
+     return [
+            "enableNothing":"Nothing",
+            "enableOn":"On",
+            "enableOnFull":"Full On",
+            "enableOff": "Off",
+            "enableOffFull": "Full Off"
+            ]
+}
+/* // Page to setup based on Enabled Type
 def secondPage() {
     dynamicPage(name: "secondPage", title: "Setup Enable Choice", nextPage: "thirdPage", install: false, uninstall: true) {
     	if (enableType == "alwaysEnabledChoice") {
@@ -109,9 +160,10 @@ def secondPage() {
         }
     }
 }
+*/
 
-def thirdPage() {
-	dynamicPage(name: "thirdPage", title: "Name app and configure modes", install: true, uninstall: true) {
+def installPage() {
+	dynamicPage(name: "installPage", title: "Name app and configure modes", install: true, uninstall: state.installed) {
         section([mobileOnly:true]) {
             label title: "Assign a name", required: false
             mode title: "Set for specific mode(s)", required: false
@@ -119,8 +171,74 @@ def thirdPage() {
     }
 }
 
+// Show "About" page
+private def pageAbout() {
+
+    def textAbout =
+        "Control when a light turns on and off with separate \"enabled\" and \"action\" conditions. " +
+        "For example a light might turn on when someone arrives (action) but only when it's dark (enabled)." +
+        "\r\n\r\nEnable choices are time (based on sunrise/set), light level, always, or mode change.  The " +
+        "automatation can also be optionally enabled/disabled by double tapping on or off a switch." +
+        "\r\nAction choices are motion, open/close, arrival, or mode change." +
+        "\r\n\r\nWhen turned on the light will remain on for a set number of minutes after all actions are cleared. " +
+        "For example if two different open/close sensors are used, the light won't turn off until after BOTH are closed." +
+        "\r\n\r\nPersistent Mode means the light will always be \"turned on\" on a action even it has been manually turned off. " +
+        "If you disable presistent mode and manually turn off the light it won't turn back on until all actions clear for the configured time" +
+        "\r\n\r\nYou can also control what happens when automation is enabled.  On means dimmers set to the on value, Full On means dimmers set to 100% " +
+        "Likewise Off means dimmers set to the off value and Full Off means dimmers set to 0%"
+
+    def pageProperties = [
+        name        : "pageAbout",
+        title       : "About",
+        nextPage    : "firstPage",
+        install     : false,
+        uninstall   : state.installed
+    ]
+
+    return dynamicPage(pageProperties) {
+        section {
+            paragraph textAbout
+        }
+    }
+}
+
+// Show "Configure Dimmers and Switches" setup page
+private def dimmerConfigPage() {
+    if (dimmers == null) {
+        return installPage()
+    }
+    
+    def textAbout =
+        "Set desired dimming levels for each switch. Dimming values " +
+        "are between 0 (off) and 99 (full brightness)."
+
+    def pageProperties = [
+        name        : "dimmerConfigPage",
+        title       : "Configure Dimmers and Switches",
+        nextPage    : installPage,
+        install     : false,
+        uninstall   : state.installed
+    ]
+
+    return dynamicPage(pageProperties) {
+        section {
+            paragraph textAbout
+        }
+        
+        settings.dimmers?.each() {
+            def name = it as String
+            section("${name} Config", hideable:true, hidden:false) {
+              input "${name}_OnVal", "number", title:"${name} On Value", required:true
+              input "${name}_OffVal", "number", title:"${name} Off Value", required:true
+            }
+        }
+    }
+}
+
+
 def installed() {
 	initialize()
+    state.installed = true
 }
 
 def updated() {
@@ -141,14 +259,21 @@ def initialize() {
     	subscribe(people, "presence", presenceHandler)
     }
     
+    // Config based on the enable type
 	if (enableType == "alwaysEnabledChoice") {
     	state.alwaysEnabled = true
+        state.enabled = true
         def lightSensor = null
     } else if (enableType == "lightSensorChoice") {
     	state.alwaysEnabled = false
+        state.enabled = false
 		subscribe(lightSensor, "illuminance", illuminanceHandler, [filterEvents: false])
-	} else {
+	} else if (enableType == "modeEnableChoice") {
+    	subscribe(location, modeHandler)
+        state.enabled = false
+    } else if (enableType == "sunChoice") {
     	state.alwaysEnabled = false
+        state.enabled = false
         def lightSensor = null
         state.riseTime = 0
         state.setTime = 0
@@ -158,11 +283,21 @@ def initialize() {
 		astroCheck()
         // schedule an astro check every 1h to work around SmartThings missing scheduled events issues
         runEvery1Hour(astroCheck)
+        // Set the initial enabled state (from astroCheck)
+        state.enabled = state.astroEnabled
 	}
+    
+    if (doubleTapSwitch) {
+        subscribe(doubleTapSwitch, "switch", switchHandler, [filterEvents: false])
+    }
+    
     state.lastStatus = "unknown"
     log.debug "Initialize: Always Enabled: $state.alwaysEnabled"
     log.debug "Initialize: Light Sensor: $lightSensor"
     log.debug "Initialize: Persistent mode: $perst"
+    log.debug "Initialize: enabled: $state.enabled"
+    log.debug "Initialize: Action on Enable: $actionOnEnable"
+    log.debug "Initialize: Action on Disable: $actionOndisable"
 }
 
 def locationPositionChange(evt) {
@@ -175,7 +310,6 @@ def sunriseSunsetTimeHandler(evt) {
 	log.debug "SmartNightlight.sunriseSunsetTimeHandler($app.id)"
 	astroCheck()
 }
-
 
 
 //
@@ -220,6 +354,7 @@ def motionHandler(evt) {
         	if (lastStatus != "on" || perst ) {
 				log.debug "turning on lights due to motion"
 				lights.on()
+                turnOnDimmers()
 				state.lastStatus = "on"
             }
 		}
@@ -246,6 +381,7 @@ def contactHandler(evt) {
 		if (enabled()) {
 			log.debug "turning on lights due to door opened"
 			lights.on()
+            turnOnDimmers()
 			state.lastStatus = "on"
 		}
 		state.motionStopTime = null
@@ -268,18 +404,25 @@ def contactHandler(evt) {
 def illuminanceHandler(evt) {
 	log.debug "$evt.name: $evt.value, lastStatus: $state.lastStatus, motionStopTime: $state.motionStopTime"
 	def lastStatus = state.lastStatus
-    // Turn off lights when it gets bright
-	if (lastStatus != "off" && evt.integerValue > 50) {
-		lights.off()
-		state.lastStatus = "off"
-	}
+    // Turn off enable
+	if (evt.integerValue > 50 && state.enabled != false) {
+        log.debug "Disable automation since it's bright"
+		state.enabled = false
+		enableChangeActions(actionOndisable)
+	} else if (evt.integerValue < 30 && state.enabled != true) {
+        log.debug "Enable automation since it's dark"
+		state.enabled = true
+		enableChangeActions(actionOnEnable)
+    }
+    
     // Check if it just got dark enough to turn on the lights
-	else if (enabled() && (checkDoorsOpen() || checkAnyMotion())) {
+	if (enabled() && (checkDoorsOpen() || checkAnyMotion())) {
 		log.debug "turning on lights since it's now dark and there is motion or something opened"
 		lights.on()
+        turnOnDimmers()
 		state.lastStatus = "on"
+        state.motionStopTime = null
 	}
-	state.motionStopTime = null
 }
 
 //
@@ -287,12 +430,13 @@ def illuminanceHandler(evt) {
 //
 def presenceHandler(evt) {
 	log.debug "$evt.name: $evt.value"
-    // Don't do anything is the off time is 0 or we'd
+    // Don't do anything if the off time is 0 or we'd
     // just turn the light on then off
 	if (evt.value == "present" && delayMinutes != 0) {
 		if (enabled()) {
 			log.debug "turning on lights due to presence"
 			lights.on()
+            turnOnDimmers()
 			state.lastStatus = "on"
 		}
 		state.motionStopTime = null
@@ -301,6 +445,30 @@ def presenceHandler(evt) {
 	}
 }
 
+//
+// Handle location event.
+//
+def modeHandler(evt) {
+    log.debug "modeHandler: $evt.value"
+
+    // Enable Mode, turn on lights
+    if (evt.value == enableMode && state.enabled != true) {
+        state.enabled = true
+        log.debug "modeHandler: Enable"
+        enableChangeActions(actionOnEnable)
+        if (checkDoorsOpen() || checkAnyMotion()) {
+            lights.on()
+            turnOnDimmers()
+            state.lastStatus = "on"
+            state.motionStopTime = null
+        }
+    // Disable mode
+    } else if (evt.value == disableMode && state.enabled != false) {
+        state.enabled = false
+        log.debug "modeHandler: Turning off lights"
+        enableChangeActions(actionOndisable)
+    }
+}
 
 //
 // Sunset Handler
@@ -308,12 +476,15 @@ def presenceHandler(evt) {
 //
 def sunsetHandler() {
 	log.debug "Executing sunset handler"
+    enableChangeActions(actionOnEnable)
     // Check if there is a door open to turn on the lights
 	if (checkDoorsOpen()) {
 		log.debug "turning on lights since it's now sunset and there is something opened"
 		lights.on()
+        turnOnDimmers()
 		state.lastStatus = "on"
 	}
+    state.enabled = true
 	state.motionStopTime = null
 }
     	
@@ -323,12 +494,55 @@ def sunsetHandler() {
 //
 def sunriseHandler() {
 	log.debug "Executing sunrise handler"
-    // Turn off lights when it gets bright
-	if (lastStatus != "off") {
-		log.debug "turning off lights since it's now sunrise"
-		lights.off()
-		state.lastStatus = "off"
+    enableChangeActions(actionOndisable)
+    state.enabled = false
+}
+
+//
+// Switch Handler: for double tap
+//
+def switchHandler(evt) {
+	log.info evt.value
+
+	// use Event rather than DeviceState because we may be changing DeviceState to only store changed values
+	def recentStates = doubleTapSwitch.eventsSince(new Date(now() - 4000), [all:true, max: 10]).findAll{it.name == "switch"}
+	log.debug "${recentStates?.size()} STATES FOUND, LAST AT ${recentStates ? recentStates[0].dateCreated : ''}"
+
+	if (evt.physical) {
+		if (evt.value == "on" && lastTwoStatesWere("on", recentStates, evt)) {
+			log.debug "detected two taps, enable automation"
+			state.enabled = true
+            enableChangeActions(DTactionOnEnable)
+		} else if (evt.value == "off" && lastTwoStatesWere("off", recentStates, evt)) {
+			log.debug "detected two taps, disable automation"
+			state.enabled = false
+            enableChangeActions(DTactionOndisable)
+		}
 	}
+	else {
+		log.trace "Skipping digital on/off event"
+	}
+}
+
+// Helper function to determine double tap
+private lastTwoStatesWere(value, states, evt) {
+	def result = false
+	if (states) {
+
+		log.trace "unfiltered: [${states.collect{it.dateCreated + ':' + it.value}.join(', ')}]"
+		def onOff = states.findAll { it.physical || !it.type }
+		log.trace "filtered:   [${onOff.collect{it.dateCreated + ':' + it.value}.join(', ')}]"
+
+		// This test was needed before the change to use Event rather than DeviceState. It should never pass now.
+		if (onOff[0].date.before(evt.date)) {
+			log.warn "Last state does not reflect current event, evt.date: ${evt.dateCreated}, state.date: ${onOff[0].dateCreated}"
+			result = evt.value == value && onOff[0].value == value
+		}
+		else {
+			result = onOff.size() > 1 && onOff[0].value == value && onOff[1].value == value
+		}
+	}
+	result
 }
 
 
@@ -353,7 +567,7 @@ def scheduleCheckTurnOff() {
 // Check if the light(s) should be turned off
 //
 def checkTurnOff() {
-	log.trace "In checkTurnOff, state.motionStopTime = $state.motionStopTime, state.lastStatus = $state.lastStatus"
+	log.debug "In checkTurnOff, state.motionStopTime = $state.motionStopTime, state.lastStatus = $state.lastStatus"
     // Check only if:
     	// - there is a stopTimeSet (this is set to Null when we turn on),
         // - All doors are closed and there is no motion
@@ -363,8 +577,81 @@ def checkTurnOff() {
         // motionStopTime will be "Null"
         log.debug "Turning off lights"
 		lights.off()
+        turnOffDimmers()
 		state.lastStatus = "off"
 	}
+}
+
+
+//
+// Turn on Dimmers
+//
+def turnOnDimmers() {
+
+    settings.dimmers?.each() {
+        def name = it as String
+        def fullName = "${name}_OnVal"
+        def value = settings[fullName]
+        log.debug("turnOnDimmers: value: $value")
+        value = value.toInteger()
+        if (value > 99) value = 99
+        it.setLevel(value)
+        log.debug("turnOnDimmers: Set $it to $value")
+    }
+}
+
+
+//
+// Turn off Dimmers
+//
+def turnOffDimmers() {
+
+    settings.dimmers?.each() {
+        def name = it as String
+        def fullName = "${name}_OffVal"
+        def value = settings[fullName]
+        log.debug("turnOffDimmers: value: $value")
+        value = value.toInteger()
+        if (value > 99) value = 99
+        it.setLevel(value)
+        log.debug("turnOffDimmers: Set $it to $value")
+    }
+}
+
+
+//
+// What to do on disable
+//
+def enableChangeActions(var) {
+    log.debug "enableChangeActions: passed in $var"
+    
+
+    switch(var) {
+      case "enableOff" :
+        log.debug "enableChangeActions:doing enableOff"
+        lights.off()
+        turnOffDimmers()
+		state.lastStatus = "off"
+        break
+      case "enableOffFull" :
+        log.debug "enableChangeActions:doing enableOffFull"
+        lights.off()
+        dimmers.setLevel(0)
+		state.lastStatus = "off"
+        break
+      case "enableOn" :
+        log.debug "enableChangeActions:doing enableOn"
+        lights.on()
+        turnOnDimmers()
+        state.lastStatus = "on"
+        break
+      case "enableOnFull" :
+        log.debug "enableChangeActions:doing enableOnFull"
+        lights.on()
+        dimmers.setLevel(99)
+        state.lastStatus = "on"
+        break
+    }
 }
 
 
@@ -373,13 +660,14 @@ def checkTurnOff() {
 //
 def astroCheck() {
 	def s = getSunriseAndSunset(zipCode: zipCode, sunriseOffset: sunriseOffset, sunsetOffset: sunsetOffset)    
-    def now = new Date()
+    def current = new Date()
 	def riseTime = s.sunrise
 	def setTime = s.sunset
+    def result
 
 	// If the riseTime is before now,
     // set to the next riseTime
-	if(riseTime.before(now)) {
+	if(riseTime.before(current)) {
 		riseTime = riseTime.next()
         log.debug "Setting to the next rise time"
 	}
@@ -396,7 +684,7 @@ def astroCheck() {
 
 	// If the setTime is before now,
     // set to the next setTime
-	if(setTime.before(now)) {
+	if(setTime.before(current)) {
 		setTime = setTime.next()
 	}
     
@@ -411,10 +699,29 @@ def astroCheck() {
 	    schedule(setTime, sunsetHandler)
 	}
     
-    log.debug "Now: $now"
+    log.debug "Current: $current"
     log.debug "riseTime: $riseTime"
 	log.debug "setTime: $setTime"
-    
+
+    // Code to set the enable state
+    // Also done on the sunset and sunrise handlers
+    // But done here incase the app is loaded after sunset
+    // Sets a special state variable only used at init
+	def t = now()
+    log.debug "Time is $t"
+    // If riseTime is greater than setTime we can just check if after setTime
+    // the check is after set AND before rise
+    if (state.riseTime > state.setTime) {
+	    result = t < state.riseTime && t > state.setTime
+
+		// Else (this means rise time is LESS then set time)
+        // This can happen if the set time is updated before the current
+        // day's rise time.
+        // In this case we just check if we're before the rise time
+    } else {
+       	result = t < state.riseTime
+    }
+    state.astroEnabled = result
 }
 
 //
@@ -425,30 +732,13 @@ private enabled() {
     if (state.alwaysEnabled) {
     	log.debug "enabled(): Always Enabled"
     	result = true
-	} else if (lightSensor) {
-		result = lightSensor.currentIlluminance?.toInteger() < 30
 	}
-    // Else using set rise/set
+    // Else using sun rise/set or mode or light
 	else {
-		def t = now()
-        log.debug "Time is $t"
-        log.debug "Rise is $state.riseTime"
-        log.debug "Set is $state.setTime"
-        // If riseTime is greater than setTime we can just check if after setTime
-        // the check is after set AND before rise
-        if (state.riseTime > state.setTime) {
-			result = t < state.riseTime && t > state.setTime
-
-		// Else (this means rise time is LESS then set time)
-        // This can happen if the set time is updated before the current
-        // day's rise time.
-        // In this case we just check if we're before the rise time
-        } else {
-        	result = t < state.riseTime
-        }
+        result = state.enabled
 	}
     log.debug "Enabled: $result"
-	result
+	return result
 }
 
 private getSunriseOffset() {
