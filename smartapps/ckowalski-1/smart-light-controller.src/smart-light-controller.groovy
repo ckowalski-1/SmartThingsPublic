@@ -111,17 +111,29 @@ def firstPage() {
             }
         }
        
-    section("Select switch to enable/disable with double tap (optional)") {
-        input "doubleTapSwitch", "capability.switch", multiple: false, required: false, submitOnChange: true
+        section("Select switch to enable/disable automation with double tap (optional)") {
+            input "doubleTapSwitch", "capability.switch", multiple: false, required: false, submitOnChange: true
 		}
         
         // Options are presented if a switch is chosed
         if (doubleTapSwitch != null) {
-            section("Pick what to do when automation is enabled or disabled via a switch") {
-                input "DTactionOnEnable", "enum", title: "What to do on enable", required: true, options: enableActionTypes(), defaultValue: "On"
-                input "DTactionOndisable", "enum", title: "What to do on disable", required: true, options: enableActionTypes(), defaultValue: "OffFull"
+            section("Pick what to do when automation is enabled or disabled via the double tap switch") {
+                input "DTactionOnEnable", "enum", title: "What to do on enable (double tap on)", required: true, options: enableActionTypes(), defaultValue: "On"
+                input "DTactionOndisable", "enum", title: "What to do on disable (double tap off)", required: true, options: enableActionTypes(), defaultValue: "OffFull"
             }
-        }   
+        }
+        
+        section("Select switch to enable/disable automation with on/off toggle (optional)") {
+            input "toggleSwitch", "capability.switch", multiple: false, required: false, submitOnChange: true
+		}
+        
+        // Options are presented if a switch is chosed
+        if (toggleSwitch != null) {
+            section("Pick what to do when automation is enabled or disabled via  the toggle switch") {
+                input "STactionOnEnable", "enum", title: "What to do on enable (On then off)", required: true, options: enableActionTypes(), defaultValue: "On"
+                input "STactionOndisable", "enum", title: "What to do on disable (off then on)", required: true, options: enableActionTypes(), defaultValue: "OffFull"
+            }
+        }
     }
 }
 
@@ -291,6 +303,10 @@ def initialize() {
         subscribe(doubleTapSwitch, "switch", switchHandler, [filterEvents: false])
     }
     
+    if (toggleSwitch) {
+        subscribe(toggleSwitch, "switch", switchHandlerToggle, [filterEvents: false])
+    }
+    
     state.lastStatus = "unknown"
     log.debug "Initialize: Always Enabled: $state.alwaysEnabled"
     log.debug "Initialize: Light Sensor: $lightSensor"
@@ -298,6 +314,10 @@ def initialize() {
     log.debug "Initialize: enabled: $state.enabled"
     log.debug "Initialize: Action on Enable: $actionOnEnable"
     log.debug "Initialize: Action on Disable: $actionOndisable"
+    log.debug "Initialize: DT Action on Enable: $DTactionOnEnable"
+    log.debug "Initialize: DT Action on Disable: $DTactionOndisable"
+    log.debug "Initialize: ST Action on Enable: $STactionOnEnable"
+    log.debug "Initialize: ST Action on Disable: $STactionOndisable"
 }
 
 def locationPositionChange(evt) {
@@ -353,8 +373,8 @@ def motionHandler(evt) {
 		if (enabled()) {
         	if (lastStatus != "on" || perst ) {
 				log.debug "turning on lights due to motion"
-				lights.on()
-                turnOnDimmers()
+				if (lights != null) {lights.on()}
+                if (dimmers != null) {turnOnDimmers()}
 				state.lastStatus = "on"
             }
 		}
@@ -380,8 +400,8 @@ def contactHandler(evt) {
 	if (evt.value == "open") {
 		if (enabled()) {
 			log.debug "turning on lights due to door opened"
-			lights.on()
-            turnOnDimmers()
+			if (dimmers != null) {lights.on()}
+            if (lights != null) {turnOnDimmers()}
 			state.lastStatus = "on"
 		}
 		state.motionStopTime = null
@@ -418,8 +438,8 @@ def illuminanceHandler(evt) {
     // Check if it just got dark enough to turn on the lights
 	if (enabled() && (checkDoorsOpen() || checkAnyMotion())) {
 		log.debug "turning on lights since it's now dark and there is motion or something opened"
-		lights.on()
-        turnOnDimmers()
+		if (lights != null) {lights.on()}
+        if (dimmers != null) {turnOnDimmers()}
 		state.lastStatus = "on"
         state.motionStopTime = null
 	}
@@ -435,8 +455,8 @@ def presenceHandler(evt) {
 	if (evt.value == "present" && delayMinutes != 0) {
 		if (enabled()) {
 			log.debug "turning on lights due to presence"
-			lights.on()
-            turnOnDimmers()
+			if (lights != null) {lights.on()}
+            if (dimmers != null) {turnOnDimmers()}
 			state.lastStatus = "on"
 		}
 		state.motionStopTime = null
@@ -457,15 +477,15 @@ def modeHandler(evt) {
         log.debug "modeHandler: Enable"
         enableChangeActions(actionOnEnable)
         if (checkDoorsOpen() || checkAnyMotion()) {
-            lights.on()
-            turnOnDimmers()
+            if (lights != null) {lights.on()}
+            if (dimmers != null) {turnOnDimmers()}
             state.lastStatus = "on"
             state.motionStopTime = null
         }
     // Disable mode
     } else if (evt.value == disableMode && state.enabled != false) {
         state.enabled = false
-        log.debug "modeHandler: Turning off lights"
+        log.debug "modeHandler: Disable"
         enableChangeActions(actionOndisable)
     }
 }
@@ -478,10 +498,10 @@ def sunsetHandler() {
 	log.debug "Executing sunset handler"
     enableChangeActions(actionOnEnable)
     // Check if there is a door open to turn on the lights
-	if (checkDoorsOpen()) {
+	if (checkDoorsOpen() || checkAnyMotion()) {
 		log.debug "turning on lights since it's now sunset and there is something opened"
-		lights.on()
-        turnOnDimmers()
+		if (lights != null) {lights.on()}
+        if (dimmers != null) {turnOnDimmers()}
 		state.lastStatus = "on"
 	}
     state.enabled = true
@@ -502,30 +522,54 @@ def sunriseHandler() {
 // Switch Handler: for double tap
 //
 def switchHandler(evt) {
-	log.info evt.value
+	log.debug "switchHandler: $evt.value , was physical: $evt.physical"
 
 	// use Event rather than DeviceState because we may be changing DeviceState to only store changed values
 	def recentStates = doubleTapSwitch.eventsSince(new Date(now() - 4000), [all:true, max: 10]).findAll{it.name == "switch"}
 	log.debug "${recentStates?.size()} STATES FOUND, LAST AT ${recentStates ? recentStates[0].dateCreated : ''}"
 
 	if (evt.physical) {
-		if (evt.value == "on" && lastTwoStatesWere("on", recentStates, evt)) {
+		if (evt.value == "on" && lastTwoStatesWere("on", recentStates, evt, "on")) {
 			log.debug "detected two taps, enable automation"
 			state.enabled = true
             enableChangeActions(DTactionOnEnable)
-		} else if (evt.value == "off" && lastTwoStatesWere("off", recentStates, evt)) {
+		} else if (evt.value == "off" && lastTwoStatesWere("off", recentStates, evt, "off")) {
 			log.debug "detected two taps, disable automation"
 			state.enabled = false
             enableChangeActions(DTactionOndisable)
 		}
 	}
 	else {
-		log.trace "Skipping digital on/off event"
+		log.debug "Skipping digital on/off event"
 	}
 }
 
-// Helper function to determine double tap
-private lastTwoStatesWere(value, states, evt) {
+//
+// Switch Handler: for toggle
+//
+def switchHandlerToggle(evt) {
+	log.debug "switchHandlerToggle: $evt.value"
+
+	// use Event rather than DeviceState because we may be changing DeviceState to only store changed values
+	def recentStates = toggleSwitch.eventsSince(new Date(now() - 10000), [all:true, max: 10]).findAll{it.name == "switch"}
+	log.debug "${recentStates?.size()} STATES FOUND, LAST AT ${recentStates ? recentStates[0].dateCreated : ''}"
+
+    // Enable is On then off
+    if (evt.value == "off" && lastTwoStatesWere("off", recentStates, evt, "on")) {
+		log.debug "detected on then off, enable automation"
+		state.enabled = true
+        enableChangeActions(STactionOnEnable)
+    //Disable is Off then On
+	} else if (evt.value == "on" && lastTwoStatesWere("on", recentStates, evt, "off")) {
+		log.debug "detected off then on, disable automation"
+		state.enabled = false
+        enableChangeActions(STactionOndisable)
+	}
+}
+
+
+// Helper function to determine double tap or toggle
+private lastTwoStatesWere(value, states, evt, value1) {
 	def result = false
 	if (states) {
 
@@ -539,9 +583,9 @@ private lastTwoStatesWere(value, states, evt) {
 			result = evt.value == value && onOff[0].value == value
 		}
 		else {
-			result = onOff.size() > 1 && onOff[0].value == value && onOff[1].value == value
+			result = onOff.size() > 1 && onOff[0].value == value && onOff[1].value == value1
 		}
-	}
+    }
 	result
 }
 
@@ -576,8 +620,8 @@ def checkTurnOff() {
         // is overwritten when re-scheduled.  If there was a schedule to get here and then something happened
         // motionStopTime will be "Null"
         log.debug "Turning off lights"
-		lights.off()
-        turnOffDimmers()
+		if (lights != null) {lights.off()}
+        if (dimmers != null) {turnOffDimmers()}
 		state.lastStatus = "off"
 	}
 }
@@ -588,15 +632,17 @@ def checkTurnOff() {
 //
 def turnOnDimmers() {
 
-    settings.dimmers?.each() {
-        def name = it as String
-        def fullName = "${name}_OnVal"
-        def value = settings[fullName]
-        log.debug("turnOnDimmers: value: $value")
-        value = value.toInteger()
-        if (value > 99) value = 99
-        it.setLevel(value)
-        log.debug("turnOnDimmers: Set $it to $value")
+    if (settings.dimmers != null) {
+        settings.dimmers?.each() {
+            def name = it as String
+            def fullName = "${name}_OnVal"
+            def value = settings[fullName]
+            log.debug("turnOnDimmers: value: $value")
+            value = value.toInteger()
+            if (value > 99) value = 99
+            it.setLevel(value)
+            log.debug("turnOnDimmers: Set $it to $value")
+        }
     }
 }
 
@@ -605,16 +651,18 @@ def turnOnDimmers() {
 // Turn off Dimmers
 //
 def turnOffDimmers() {
-
-    settings.dimmers?.each() {
-        def name = it as String
-        def fullName = "${name}_OffVal"
-        def value = settings[fullName]
-        log.debug("turnOffDimmers: value: $value")
-        value = value.toInteger()
-        if (value > 99) value = 99
-        it.setLevel(value)
-        log.debug("turnOffDimmers: Set $it to $value")
+    
+    if (settings.dimmers != null) {
+        settings.dimmers?.each() {
+            def name = it as String
+            def fullName = "${name}_OffVal"
+            def value = settings[fullName]
+            log.debug("turnOffDimmers: value: $value")
+            value = value.toInteger()
+            if (value > 99) value = 99
+            it.setLevel(value)
+            log.debug("turnOffDimmers: Set $it to $value")
+        }
     }
 }
 
@@ -629,26 +677,27 @@ def enableChangeActions(var) {
     switch(var) {
       case "enableOff" :
         log.debug "enableChangeActions:doing enableOff"
-        lights.off()
-        turnOffDimmers()
+        if (lights != null) {lights.off()}
+        if (dimmers != null) {turnOffDimmers()}
 		state.lastStatus = "off"
         break
       case "enableOffFull" :
         log.debug "enableChangeActions:doing enableOffFull"
-        lights.off()
-        dimmers.setLevel(0)
+        if (lights != null) {lights.off()}
+        if (dimmers != null) {dimmers.setLevel(0)}
 		state.lastStatus = "off"
         break
       case "enableOn" :
         log.debug "enableChangeActions:doing enableOn"
-        lights.on()
-        turnOnDimmers()
+        if (lights != null) {lights.on()}
+        if (dimmers != null) {turnOnDimmers()}
         state.lastStatus = "on"
+        if (dimmers != null) {turnOnDimmers()}; // Double set to work around switch oddness
         break
       case "enableOnFull" :
         log.debug "enableChangeActions:doing enableOnFull"
-        lights.on()
-        dimmers.setLevel(99)
+        if (lights != null) {lights.on()}
+        if (dimmers != null) {dimmers.setLevel(99)}
         state.lastStatus = "on"
         break
     }
@@ -748,4 +797,5 @@ private getSunriseOffset() {
 private getSunsetOffset() {
 	sunsetOffsetValue ? (sunsetOffsetDir == "Before" ? "-$sunsetOffsetValue" : sunsetOffsetValue) : null
 }
+
 
